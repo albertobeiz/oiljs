@@ -1,11 +1,12 @@
 # oiljs
 
-Procedural portraits painted in simulated oil: a seeded [drawai](../drawai)
+Procedural portraits painted in simulated oil: a seeded drawai
 character is planned into brush strokes, those strokes are executed by a
 height-field paint engine, and the resulting paste is rendered as real
 displaced geometry in three.js. Same seed, same painting.
 
 ```bash
+npm install
 python3 serve.py
 ```
 

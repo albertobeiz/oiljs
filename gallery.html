@@ -70,7 +70,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { makeSubject, drawSubject, TW, TH } from './src/subject.js';
+import { makeSubject, renderSubject, REGIONS, TW, TH } from './src/subject.js';
 import { planStrokes } from './src/planner.js';
 import { PaintEngine } from './src/engine.js';
 import { PaintSurface, PAINT_W, PAINT_H } from './src/surface.js';
@@ -290,7 +290,7 @@ async function run() {
   for (let i = 0; i < N; i++) {
     const seed = (Math.random() * 0xffffffff) >>> 0;
     const recipe = makeSubject(seed);
-    const target = drawSubject(recipe);
+    const { canvas: target, labels } = renderSubject(recipe);
     const engine = new PaintEngine(TW, TH, seed);
     const surface = new PaintSurface(engine, { segments: 4, castShadow: false, hScale: 0.006 });
 
@@ -303,7 +303,7 @@ async function run() {
     const plaque = makePlaque(group, recipe, seed, i);
     scene.add(group);
 
-    slots.push({ seed, recipe, target, engine, surface, group, plaque });
+    slots.push({ seed, recipe, target, labels, engine, surface, group, plaque });
     ui.info.textContent = `preparando lienzos ${i + 1}/${N}…`;
     await nextFrame();
     if (mine !== runId) return;
@@ -320,10 +320,10 @@ async function run() {
 let skipping = false;
 
 async function paint(slot, mine) {
-  const { seed, target, engine, surface } = slot;
+  const { seed, target, labels, engine, surface } = slot;
   // planStrokes paints as it plans — it needs the canvas so far to decide
   // where the error is — so the engine is wiped and replayed for the show.
-  const strokes = planStrokes(target, seed, engine);
+  const strokes = planStrokes(target, seed, engine, labels, REGIONS);
   engine.reset();
   surface.update();
   for (let s = 0; s < strokes.length;) {

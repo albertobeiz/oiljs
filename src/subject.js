@@ -68,21 +68,76 @@ function pieces(r, F) {
   return out.sort((a, b) => a.order - b.order || a.i - b.i);
 }
 
-// Draw every part of a recipe onto a context already transformed so that the
-// origin is the centre of the head. Shared by the measuring pass and the real
-// one, so what gets measured is exactly what gets painted.
+// Draw one part onto a context already transformed so that the origin is the
+// centre of the head. The boil is seeded from the bone name, so drawing the
+// same part twice — once for the picture, once for the region mask — puts
+// every mark in the same place.
+function drawPiece(s, r, F, e) {
+  // save/restore per part is load-bearing: eyes and tears translate the
+  // context without restoring it, and drawai's rig is what absorbs that.
+  s.ctx.save();
+  s.boil(hashStr(`${r.seed}:${e.b.name}`));
+  if (F.media.ink) s.setBaseInk(F.media.ink);
+  e.def.draw(s, e.P, e.def.states?.[0] ?? 'idle', F, e.b);
+  s.setBaseInk(null);
+  s.ctx.restore();
+}
+
 function paintPieces(s, r, F) {
-  const c = s.ctx;
+  for (const e of pieces(r, F)) drawPiece(s, r, F, e);
+}
+
+// The order a painter actually works in: the ground, then the big masses,
+// then the head, and the eyes last of all. `from` is the first brush size a
+// region is allowed — a 40px brush has no business blocking in an eye, so
+// small regions join the picture once the brushes are small enough to mean
+// something there. Everything the planner does downstream reads this table.
+export const REGIONS = [
+  { id: 'fondo',   parts: [], from: 0 },
+  { id: 'cuerpo',  parts: ['tail', 'legs', 'torso', 'arms', 'wings', 'paws', 'quadlegs', 'offhand', 'held'], from: 0 },
+  { id: 'cabeza',  parts: ['skull', 'ears'], from: 0 },
+  { id: 'pelo',    parts: ['hair', 'crest', 'worn'], from: 1 },
+  { id: 'rasgos',  parts: ['nose', 'mouth', 'brows'], from: 2 },
+  { id: 'ojos',    parts: ['eyes'], from: 3 },
+  { id: 'remates', parts: ['extras', 'tearsWet'], from: 3 },
+];
+
+const LABEL_OF = {};
+REGIONS.forEach((rg, i) => rg.parts.forEach(p => { LABEL_OF[p] = i; }));
+const LABEL_STEP = 32;             // spread labels out so edge blending rounds back
+
+// Which region owns each pixel. Every part is drawn alone, flattened to a
+// flat label colour and stacked in draw order, so the last part to cover a
+// pixel owns it — exactly the part a viewer sees there.
+function regionLabels(r, F, box) {
+  const lab = document.createElement('canvas');
+  lab.width = TW; lab.height = TH;
+  const lc = lab.getContext('2d', { willReadFrequently: true });
+  lc.fillStyle = '#000';                        // label 0: bare ground
+  lc.fillRect(0, 0, TW, TH);
+
+  const tmp = new Sketch(TW, TH);
+  const tc = tmp.ctx;
   for (const e of pieces(r, F)) {
-    // save/restore per part is load-bearing: eyes and tears translate the
-    // context without restoring it, and drawai's rig is what absorbs that.
-    c.save();
-    s.boil(hashStr(`${r.seed}:${e.b.name}`));
-    if (F.media.ink) s.setBaseInk(F.media.ink);
-    e.def.draw(s, e.P, e.def.states?.[0] ?? 'idle', F, e.b);
-    s.setBaseInk(null);
-    c.restore();
+    const label = LABEL_OF[e.def.id];
+    if (label === undefined) continue;
+    tc.setTransform(1, 0, 0, 1, 0, 0);
+    tc.clearRect(0, 0, TW, TH);
+    tc.setTransform(1, 0, 0, 1, TW / 2 - box.cx, -box.y0);
+    drawPiece(tmp, r, F, e);
+    tc.setTransform(1, 0, 0, 1, 0, 0);
+    // keep the part's alpha, throw away its colour
+    tc.globalCompositeOperation = 'source-in';
+    tc.fillStyle = `rgb(${label * LABEL_STEP},0,0)`;
+    tc.fillRect(0, 0, TW, TH);
+    tc.globalCompositeOperation = 'source-over';
+    lc.drawImage(tmp.canvas, 0, 0);
   }
+
+  const d = lc.getImageData(0, 0, TW, TH).data;
+  const out = new Uint8Array(TW * TH);
+  for (let i = 0; i < out.length; i++) out[i] = Math.round(d[i * 4] / LABEL_STEP);
+  return out;
 }
 
 // Where the ink actually lands, in character coordinates. Guessing this from
@@ -192,7 +247,10 @@ function ground(c, base, seed) {
   }
 }
 
-export function drawSubject(r) {
+// The subject, plus the map of what is where. `labels` is one byte per pixel
+// indexing REGIONS, which is what lets the planner paint in a painter's order
+// instead of purely by brush size.
+export function renderSubject(r) {
   // Measure where the ink lands, then pick U so the crop fills the canvas. U
   // is resolution only, so this zooms the geometry while every grain constant
   // in Sketch stays at one device pixel — which is why the marks stay crisp
@@ -216,7 +274,9 @@ export function drawSubject(r) {
   paintPieces(s, r, F);
   c.setTransform(1, 0, 0, 1, 0, 0);
   s.done?.();
-  return s.canvas;
+
+  return { canvas: s.canvas, labels: regionLabels(r, F, box) };
 }
 
+export function drawSubject(r) { return renderSubject(r).canvas; }
 export const drawPortrait = drawSubject;

@@ -1,0 +1,22 @@
+oiljs — Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)
+
+Copyright (c) 2026 Alberto Beiz
+
+This work is licensed under the Creative Commons Attribution-NonCommercial
+4.0 International License. You are free to share and adapt the material for
+any purpose EXCEPT commercially, provided you give appropriate credit.
+
+To view a copy of this license, visit
+https://creativecommons.org/licenses/by-nc/4.0/
+Full legal code: https://creativecommons.org/licenses/by-nc/4.0/legalcode
+
+WHY NON-COMMERCIAL: this project depends on Mixbox (Secret Weapons), which
+is itself CC BY-NC 4.0. oiljs matches its most restrictive dependency. A
+commercial use of oiljs needs a commercial Mixbox licence from Secret
+Weapons — see https://scrtwpns.com/mixbox — and, separately, permission for
+this code.
+
+THIRD-PARTY COMPONENTS, under their own terms:
+  src/drawai/  — the Unlicense (public domain). See src/drawai/LICENSE.
+  three.js     — MIT (not vendored; installed via npm).
+  Mixbox       — CC BY-NC 4.0 (not vendored; installed via npm).

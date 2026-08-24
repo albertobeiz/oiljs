@@ -27,7 +27,65 @@ function blurCanvas(src, px) {
   return ctx.getImageData(0, 0, cv.width, cv.height);
 }
 
-export function planStrokes(targetCanvas, seed, engine) {
+// Everything a layer needs, built once: the blurred reference it paints
+// towards, its gradient field, its cell grid, and which region owns each cell.
+function prepareLayer(targetCanvas, W, H, L, labels, g) {
+  const ref = blurCanvas(targetCanvas, Math.max(1, L.r * 0.5)).data;
+
+  // luminance + Sobel gradient of the blurred reference
+  const lum = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    lum[i] = 0.299 * ref[i * 4] + 0.587 * ref[i * 4 + 1] + 0.114 * ref[i * 4 + 2];
+  }
+  const gx = new Float32Array(W * H), gy = new Float32Array(W * H);
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      const i = y * W + x;
+      gx[i] = (lum[i + 1 - W] + 2 * lum[i + 1] + lum[i + 1 + W]
+             - lum[i - 1 - W] - 2 * lum[i - 1] - lum[i - 1 + W]) / 8;
+      gy[i] = (lum[i + W - 1] + 2 * lum[i + W] + lum[i + W + 1]
+             - lum[i - W - 1] - 2 * lum[i - W] - lum[i - W + 1]) / 8;
+    }
+  }
+
+  const step = Math.max(2, Math.round(L.r));
+  const cells = [];
+  for (let cy = 0; cy < H; cy += step) {
+    for (let cx = 0; cx < W; cx += step) cells.push([cx, cy]);
+  }
+  // shuffled so strokes don't march in rows; the region pass gives the
+  // large-scale order, this keeps the small scale from looking mechanical
+  for (let i = cells.length - 1; i > 0; i--) {
+    const j = Math.floor(g.next() * (i + 1));
+    [cells[i], cells[j]] = [cells[j], cells[i]];
+  }
+
+  // the region that owns each cell: whichever one covers most of it
+  const owner = new Uint8Array(cells.length);
+  if (labels) {
+    const tally = new Uint16Array(32);
+    for (let k = 0; k < cells.length; k++) {
+      tally.fill(0);
+      const [cx0, cy0] = cells[k];
+      for (let y = cy0; y < Math.min(H, cy0 + step); y += 2) {
+        for (let x = cx0; x < Math.min(W, cx0 + step); x += 2) tally[labels[y * W + x]]++;
+      }
+      let best = 0;
+      for (let t = 1; t < 32; t++) if (tally[t] > tally[best]) best = t;
+      owner[k] = best;
+    }
+  }
+  return { ref, gx, gy, cells, step, owner };
+}
+
+// Plans the strokes and stamps each one as it goes: the planner needs the
+// canvas so far to know where the error still is.
+//
+// With a region map it works the way a painter does — the ground, then the
+// masses, then the head, then the features, and the eyes last — running the
+// whole coarse-to-fine ladder inside each region before moving on. Without
+// one it falls back to plain layer order over the whole canvas.
+export function planStrokes(targetCanvas, seed, engine, labels = null, regions = null) {
   const W = targetCanvas.width, H = targetCanvas.height;
   const g = makeRng(seed ^ 0x9e3779b9);
   const sim = engine.color;                    // engine grid == target pixels
@@ -39,58 +97,42 @@ export function planStrokes(targetCanvas, seed, engine) {
   // image turns every dark contour into grey mush.
   const sharp = blurCanvas(targetCanvas, 0).data;
 
-  for (let li = 0; li < LAYERS.length; li++) {
-    const { r, T, minLen, maxLen, sal: salMin } = LAYERS[li];
-    const ref = blurCanvas(targetCanvas, Math.max(1, r * 0.5)).data;
+  const prep = LAYERS.map(L => prepareLayer(targetCanvas, W, H, L, labels, g));
+  const passes = (labels && regions)
+    ? regions.map((rg, i) => ({ label: i, id: rg.id, from: rg.from }))
+    : [{ label: -1, id: null, from: 0 }];       // -1: every cell, one pass
 
-    // luminance + Sobel gradient of the blurred reference
-    const lum = new Float32Array(W * H);
-    for (let i = 0; i < W * H; i++) {
-      lum[i] = 0.299 * ref[i * 4] + 0.587 * ref[i * 4 + 1] + 0.114 * ref[i * 4 + 2];
-    }
-    const gx = new Float32Array(W * H), gy = new Float32Array(W * H);
-    for (let y = 1; y < H - 1; y++) {
-      for (let x = 1; x < W - 1; x++) {
-        const i = y * W + x;
-        gx[i] = (lum[i + 1 - W] + 2 * lum[i + 1] + lum[i + 1 + W]
-               - lum[i - 1 - W] - 2 * lum[i - 1] - lum[i - 1 + W]) / 8;
-        gy[i] = (lum[i + W - 1] + 2 * lum[i + W] + lum[i + W + 1]
-               - lum[i - W - 1] - 2 * lum[i - W] - lum[i - W + 1]) / 8;
-      }
-    }
+  for (const pass of passes) {
+    for (let li = pass.from; li < LAYERS.length; li++) {
+      const { r, T, minLen, maxLen, sal: salMin } = LAYERS[li];
+      const { ref, gx, gy, cells, step, owner } = prep[li];
 
-    // error grid: place a stroke wherever the sim differs enough from the ref
-    const step = Math.max(2, Math.round(r));
-    const cells = [];
-    for (let cy = 0; cy < H; cy += step) {
-      for (let cx = 0; cx < W; cx += step) cells.push([cx, cy]);
-    }
-    for (let i = cells.length - 1; i > 0; i--) {
-      const j = Math.floor(g.next() * (i + 1));
-      [cells[i], cells[j]] = [cells[j], cells[i]];
-    }
+      for (let k = 0; k < cells.length; k++) {
+        if (pass.label >= 0 && owner[k] !== pass.label) continue;
+        const [cx0, cy0] = cells[k];
 
-    for (const [cx0, cy0] of cells) {
-      let errSum = 0, n = 0, maxErr = -1, mx = cx0, my = cy0, salMax = 0;
-      for (let y = cy0; y < Math.min(H, cy0 + step); y += 2) {
-        for (let x = cx0; x < Math.min(W, cx0 + step); x += 2) {
-          const p = y * W + x, i = p * 4;
-          const dr = sim[i] - ref[i], dg = sim[i + 1] - ref[i + 1], db = sim[i + 2] - ref[i + 2];
-          const e = Math.sqrt(dr * dr + dg * dg + db * db);
-          errSum += e; n++;
-          if (sal[p] > salMax) salMax = sal[p];
-          if (e > maxErr) { maxErr = e; mx = x; my = y; }
+        let errSum = 0, n = 0, maxErr = -1, mx = cx0, my = cy0, salMax = 0;
+        for (let y = cy0; y < Math.min(H, cy0 + step); y += 2) {
+          for (let x = cx0; x < Math.min(W, cx0 + step); x += 2) {
+            const p = y * W + x, i = p * 4;
+            const dr = sim[i] - ref[i], dg = sim[i + 1] - ref[i + 1], db = sim[i + 2] - ref[i + 2];
+            const e = Math.sqrt(dr * dr + dg * dg + db * db);
+            errSum += e; n++;
+            if (sal[p] > salMax) salMax = sal[p];
+            if (e > maxErr) { maxErr = e; mx = x; my = y; }
+          }
         }
-      }
-      if (n === 0 || errSum / n <= T) continue;
-      if (salMin > 0 && salMax < salMin) continue;
+        if (n === 0 || errSum / n <= T) continue;
+        if (salMin > 0 && salMax < salMin) continue;
 
-      const st = growStroke(mx, my, r, minLen, maxLen, ref, sharp, sim, gx, gy, W, H, g, baseAngle);
-      if (!st) continue;
-      const stroke = colorStroke(st, r, sim, W, H, g, li);
-      if (!stroke) continue;
-      engine.stampStroke(stroke, strokes.length);
-      strokes.push(stroke);
+        const st = growStroke(mx, my, r, minLen, maxLen, ref, sharp, sim, gx, gy, W, H, g, baseAngle);
+        if (!st) continue;
+        const stroke = colorStroke(st, r, sim, W, H, g, li);
+        if (!stroke) continue;
+        stroke.region = pass.id;
+        engine.stampStroke(stroke, strokes.length);
+        strokes.push(stroke);
+      }
     }
   }
   return strokes;

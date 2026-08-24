@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { makeSubject, drawSubject, TW, TH } from './subject.js';
+import { makeSubject, renderSubject, REGIONS, TW, TH } from './subject.js';
 import { planStrokes } from './planner.js';
 import { PaintEngine } from './engine.js';
 import { PaintSurface, PAINT_W, PAINT_H } from './surface.js';
@@ -100,7 +100,7 @@ async function generate(seed) {
   await new Promise(r => setTimeout(r, 20));
 
   const recipe = makeSubject(seed);
-  const target = drawSubject(recipe);
+  const { canvas: target, labels } = renderSubject(recipe);
   ui.target.width = target.width; ui.target.height = target.height;
   ui.target.getContext('2d').drawImage(target, 0, 0);
 
@@ -109,7 +109,7 @@ async function generate(seed) {
   const t0 = performance.now();
   engine = new PaintEngine(TW, TH, seed);
   surface.setEngine(engine);
-  strokes = planStrokes(target, seed, engine);
+  strokes = planStrokes(target, seed, engine, labels, REGIONS);
   const secs = ((performance.now() - t0) / 1000).toFixed(1);
   setStatus(`${recipe.species}/${recipe.media} · ${strokes.length} pinceladas · ${secs}s`);
 

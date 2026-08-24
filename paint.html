@@ -29,7 +29,7 @@
 { "imports": { "three": "./node_modules/three/build/three.module.js", "mixbox": "./node_modules/mixbox/mixbox.esm.js" } }
 </script>
 <script type="module">
-import { makeSubject, drawSubject, TW, TH } from './src/subject.js';
+import { makeSubject, renderSubject, REGIONS, TW, TH } from './src/subject.js';
 import { planStrokes } from './src/planner.js';
 import { PaintEngine } from './src/engine.js';
 
@@ -70,11 +70,11 @@ function run(seed) {
   requestAnimationFrame(() => {
     const t0 = performance.now();
     const recipe = makeSubject(seed);
-    const target = drawSubject(recipe);
+    const { canvas: target, labels } = renderSubject(recipe);
     cT.getContext('2d').drawImage(target, 0, 0);
 
     const engine = new PaintEngine(TW, TH, seed);
-    const strokes = planStrokes(target, seed, engine);
+    const strokes = planStrokes(target, seed, engine, labels, REGIONS);
 
     const pc = cP.getContext('2d');
     const img = pc.createImageData(TW, TH);

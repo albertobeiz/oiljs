@@ -47,8 +47,29 @@ Four stages, each of which can be looked at on its own:
 The recipe is the only state, all the way through: `#<seed>` in the URL
 rebuilds the exact same painting.
 
+## Built with
+
+| | | |
+|---|---|---|
+| [**three.js**](https://threejs.org) | WebGL renderer, `OrbitControls`, the displaced-plane material | MIT |
+| [**Mixbox**](https://scrtwpns.com/mixbox) | pigment-based colour mixing (Kubelka–Munk), used for brush pickup in `src/planner.js` | **CC BY-NC 4.0** |
+| [**drawai**](https://github.com/albertobeiz/kindergrimm) | the seeded character generator, vendored under `src/drawai/` | the Unlicense |
+
+Everything else is hand-written ES modules with no build step: the browser
+loads the source directly through an import map. `serve.py` is a ~20-line
+`http.server` wrapper that sends `no-store` so edited modules always reload —
+any static server works, it just has to serve `node_modules/` too.
+
 ## Licensing
 
-`src/drawai/` is public domain (the Unlicense). **Mixbox is CC BY-NC 4.0** —
-free for non-commercial use; a commercial release needs a licence from Secret
-Weapons. It is the one dependency with strings.
+**oiljs is [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) —
+free to use, share and adapt, but not commercially.** See [LICENSE](LICENSE).
+
+That is not a preference, it is inheritance. Mixbox is CC BY-NC 4.0, and
+oiljs matches its most restrictive dependency. Going commercial means buying
+a Mixbox licence from Secret Weapons *and* getting permission for this code —
+or replacing `mixbox.lerp` in `src/planner.js` with your own subtractive
+mixing, which is the only place it is used.
+
+`src/drawai/` stays public domain (the Unlicense) under its own
+[LICENSE](src/drawai/LICENSE); three.js is MIT.

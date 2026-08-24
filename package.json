@@ -1,14 +1,14 @@
 {
   "name": "oiljs",
   "version": "1.0.0",
-  "description": "",
+  "description": "Procedural portraits painted in simulated oil, rendered as displaced geometry in three.js",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Alberto Beiz",
+  "license": "CC-BY-NC-4.0",
   "type": "commonjs",
   "dependencies": {
     "mixbox": "^2.0.0",

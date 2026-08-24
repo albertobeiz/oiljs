@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "oiljs",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["serve.py", "8471"],
+      "port": 8471
+    }
+  ]
+}

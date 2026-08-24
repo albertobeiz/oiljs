@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>oiljs — galería</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #100e0b; }
+  #app { position: fixed; inset: 0; }
+  /* controls live behind one small button in the corner: the room is for
+     the paintings, not the chrome */
+  #menuBtn {
+    position: fixed; left: 14px; bottom: 14px; z-index: 11;
+    width: 34px; height: 34px; border-radius: 50%;
+    /* the glyph is centred by flex, not by the button's default padding —
+       ☰ has uneven side bearings and drifts otherwise */
+    display: flex; align-items: center; justify-content: center;
+    padding: 0; line-height: 1;
+    background: rgba(28, 23, 17, .85); color: #c8a86a;
+    border: 1px solid rgba(200, 168, 106, .35);
+    font: 15px ui-monospace, Menlo, monospace; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .6);
+  }
+  #menuBtn:hover { background: rgba(48, 40, 28, .9); }
+  #ui {
+    position: fixed; left: 14px; bottom: 58px;
+    z-index: 10; display: none; gap: 12px; align-items: flex-start;
+    flex-direction: column;
+    background: rgba(18, 15, 11, .9); color: #d8cfc0;
+    border: 1px solid rgba(216, 207, 192, .15); border-radius: 9px;
+    padding: 12px 14px; font: 12px ui-monospace, Menlo, monospace;
+    user-select: none; max-width: calc(100vw - 28px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+  }
+  #ui.open { display: flex; }
+  #ui b { color: #f0e6d2; }
+  button { background: #3a332a; color: #e8dfc8; border: 1px solid #5a5142;
+           border-radius: 5px; padding: 4px 12px; font: inherit; cursor: pointer; }
+  button:hover { background: #4a4234; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  label { color: #8a8172; }
+  #speed { width: 130px; accent-color: #c8a86a; }
+  #rate { color: #c8a86a; min-width: 9ch; }
+  #info { color: #8a8172; min-width: 15ch; }
+  #hint { color: #6d6656; font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<button id="menuBtn" title="controles">☰</button>
+<div id="ui">
+  <b>oiljs</b>
+  <span id="info">…</span>
+  <span class="row">
+    <button id="re">Otra tanda (R)</button>
+    <button id="skip">Saltar (S)</button>
+  </span>
+  <span class="row">
+    <label for="speed">velocidad</label>
+    <input id="speed" type="range" min="0" max="100" value="45">
+    <span id="rate"></span>
+  </span>
+  <span id="hint">clic en un cuadro para acercarte · arrastra para girar</span>
+</div>
+<script type="importmap">
+{ "imports": { "three": "./node_modules/three/build/three.module.js",
+               "three/addons/": "./node_modules/three/examples/jsm/",
+               "mixbox": "./node_modules/mixbox/mixbox.esm.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { makeSubject, drawSubject, TW, TH } from './src/subject.js';
+import { planStrokes } from './src/planner.js';
+import { PaintEngine } from './src/engine.js';
+import { PaintSurface, PAINT_W, PAINT_H } from './src/surface.js';
+import { hashStr } from './src/drawai/rng.js';
+
+const COLS = 3, ROWS = 3, N = COLS * ROWS;
+const S = 0.46;                                  // painting scale on the wall
+const PW = PAINT_W * S, PH = PAINT_H * S;
+// a museum hang breathes: wide margins sideways, and enough below each
+// painting for its label to sit on the wall
+const GAPX = PW * 0.58, GAPY = PH * 0.44;
+
+const ui = {
+  info: document.getElementById('info'),
+  speed: document.getElementById('speed'),
+  rate: document.getElementById('rate'),
+};
+
+// The slider sets how many frames one painting takes to appear. It is read
+// inside the paint loop rather than captured, so dragging it retimes the
+// painting that is running right now.
+const framesPerPainting = () => {
+  const t = ui.speed.value / 100;                 // 0 slow .. 1 fast
+  return Math.round(500 * Math.pow(0.01, t));     // 500 frames down to 5
+};
+const showRate = () => {
+  const f = framesPerPainting();
+  ui.rate.textContent = f > 200 ? 'muy lenta' : f > 80 ? 'lenta'
+    : f > 30 ? 'normal' : f > 10 ? 'rápida' : 'instantánea';
+};
+ui.speed.addEventListener('input', showRate);
+showRate();
+
+// --- renderer / scene ------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.98;
+document.getElementById('app').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);   // no room: paintings in the dark
+
+const wallW = COLS * PW + (COLS - 1) * GAPX;
+const wallH = ROWS * PH + (ROWS - 1) * GAPY;
+
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.05, 60);
+// framed a little high, so the control bar sits over bare wall and never in
+// front of the bottom row
+camera.position.set(0, -PH * 0.52, wallH * 2.05);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.minDistance = 0.35;
+controls.maxDistance = 14;
+controls.target.set(0, -PH * 0.18, 0);
+
+// No environment map. The stock RoomEnvironment has a bright ceiling, and the
+// varnish reflected it: looking up at a painting from below you saw the glare
+// of a virtual room that isn't there, and from above, its dark floor. In a
+// black void the only lights the varnish may reflect are the real spots.
+
+// Museum-in-the-void lighting: there is no room, only warm track spots, one
+// per painting, each raking in from one side so the impasto casts. The
+// ambient is just enough to keep shadow sides from going to nothing.
+scene.add(new THREE.AmbientLight(0x33291d, 1.0));
+const hemi = new THREE.HemisphereLight(0x6b5c46, 0x120e0a, 0.45);
+scene.add(hemi);
+
+function paintingPos(i) {
+  const col = i % COLS, row = (i / COLS) | 0;
+  return new THREE.Vector3(
+    (col - (COLS - 1) / 2) * (PW + GAPX),
+    ((ROWS - 1) / 2 - row) * (PH + GAPY),
+    0);
+}
+
+for (let i = 0; i < N; i++) {
+  const p = paintingPos(i);
+  const spot = new THREE.SpotLight(0xffd9a2);
+  // RAKING light: far to one side, barely above centre, shallow to the
+  // canvas. Its mirror lobe exits at the same grazing angle on the other
+  // side, so a head-on viewer sees only pigment — and orbiting into that
+  // angle is what makes the impasto suddenly gleam. Sides alternate so both
+  // orbit directions find something.
+  const side = (i % 2) ? 1 : -1;
+  spot.position.set(p.x + side * PW * 1.7, p.y + PH * 0.30, PH * 0.95);
+  spot.target.position.copy(p);
+  scene.add(spot.target);
+  const d = spot.position.distanceTo(spot.target.position);
+  // wider cone than the head-on hang needed: seen from the side, the far
+  // edge of the canvas subtends more of the beam
+  spot.angle = Math.atan((PW * 1.35) / d);
+  spot.penumbra = 0.55;
+  spot.decay = 2;
+  spot.intensity = 3.2 * d * d;         // physical units: keep the pool
+  spot.castShadow = true;               // brightness independent of distance
+  spot.shadow.mapSize.set(1024, 1024);
+  spot.shadow.bias = -0.0004;
+  spot.shadow.normalBias = 0.015;
+  spot.shadow.camera.near = d * 0.4;
+  spot.shadow.camera.far = d * 2.5;
+  scene.add(spot);
+}
+
+// No wall: each painting hangs in pure darkness inside its own pool of light.
+
+// --- one hung painting -----------------------------------------------------
+const frameMats = [0x2e2016, 0x3a2a1c, 0x241a12, 0x352618].map(
+  c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.5, metalness: 0.2 }));
+const giltMat = new THREE.MeshStandardMaterial({ color: 0x8a6f3a, roughness: 0.35, metalness: 0.65 });
+
+function makeFrame(group, seed, idx) {
+  const fw = PW * 0.075, fd = 0.055;
+  const wood = frameMats[seed % frameMats.length];
+  for (const [w, h, x, y] of [
+    [PW + fw * 2, fw, 0, PH / 2 + fw / 2], [PW + fw * 2, fw, 0, -PH / 2 - fw / 2],
+    [fw, PH, -PW / 2 - fw / 2, 0], [fw, PH, PW / 2 + fw / 2, 0],
+  ]) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(w, h, fd), wood);
+    bar.position.set(x, y, fd / 2 - 0.014);
+    bar.castShadow = bar.receiveShadow = true;
+    bar.userData = { kind: 'paint', idx };
+    group.add(bar);
+  }
+  // gilt lip just inside the moulding
+  const lip = PW * 0.014;
+  for (const [w, h, x, y] of [
+    [PW + lip * 2, lip, 0, PH / 2 + lip / 2], [PW + lip * 2, lip, 0, -PH / 2 - lip / 2],
+    [lip, PH, -PW / 2 - lip / 2, 0], [lip, PH, PW / 2 + lip / 2, 0],
+  ]) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.02), giltMat);
+    bar.position.set(x, y, 0.008);
+    bar.userData = { kind: 'paint', idx };
+    group.add(bar);
+  }
+}
+
+
+// A museum label: an ivory card on the wall below the frame, with a title in
+// serif, then the sitter and technique in small capitals. Every sitter gets a
+// name from the seed, because a portrait of somebody needs a somebody.
+const SYL = ['bo', 'mi', 'ro', 'lu', 'pa', 'ti', 'no', 'sa', 'ke', 'du', 'ra', 'fi', 'go', 'ne', 'ta', 'pi'];
+function sitterName(seed) {
+  const h = hashStr(`${seed}:name`);
+  let s = '';
+  for (let i = 0, n = 2 + (h % 2); i < n; i++) s += SYL[(h >>> (i * 4 + 2)) % SYL.length];
+  return s[0].toUpperCase() + s.slice(1);
+}
+
+const TECH = { oil: 'óleo', renaissance: 'temple y óleo', baroque: 'óleo, claroscuro',
+  impressionism: 'óleo, alla prima', expressionism: 'óleo, espátula',
+  ukiyoe: 'tinta y gouache', watercolor: 'acuarela', chalk: 'pastel', marker: 'gouache' };
+
+function makePlaque(group, recipe, seed, idx) {
+  const h = hashStr(`${seed}:plaque`);
+  const year = 1580 + (h % 400);
+  const title = `Retrato de ${sitterName(seed)}`;
+  const sub = `${recipe.species} · ${TECH[recipe.media] ?? recipe.media} sobre lienzo · ${year}`;
+
+  const cv = document.createElement('canvas');
+  cv.width = 768; cv.height = 256;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#efe9db'; c.fillRect(0, 0, 768, 256);
+  c.strokeStyle = 'rgba(60,50,40,.35)'; c.lineWidth = 3;
+  c.strokeRect(14, 14, 740, 228);
+  c.fillStyle = '#2b241c';
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  let px = 58;
+  do { c.font = `italic ${px}px Georgia, serif`; px -= 2; }
+  while (px > 26 && c.measureText(title).width > 660);
+  c.fillText(title, 384, 104);
+  c.fillStyle = '#5c5344';
+  px = 30;
+  const subU = sub.toUpperCase();
+  do { c.font = `${px}px Georgia, serif`; px -= 2; }
+  while (px > 14 && c.measureText(subU).width > 660);
+  c.fillText(subU, 384, 176);
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  const w = PW * 0.52, hgt = w / 3;
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(w, hgt),
+    new THREE.MeshBasicMaterial({ map: tex }));   // self-lit: readable in the dark
+  m.position.set(0, -PH / 2 - PW * 0.075 * 2 - hgt * 0.75, 0.003);
+  m.userData = { kind: 'paint', idx };
+  group.add(m);
+  return m;
+}
+
+// --- the hang --------------------------------------------------------------
+let slots = [];
+let runId = 0;
+const nextFrame = () => new Promise(requestAnimationFrame);
+
+function clearWall() {
+  for (const s of slots) {
+    scene.remove(s.group);
+    s.surface.dispose();
+    s.group.traverse(o => { if (o.isMesh && o.geometry) o.geometry.dispose(); });
+  }
+  slots = [];
+}
+
+async function run() {
+  const mine = ++runId;
+  clearWall();
+  const t0 = performance.now();
+
+  // Hang nine primed canvases first, so the room is full before anything is
+  // painted; then they fill in one at a time.
+  for (let i = 0; i < N; i++) {
+    const seed = (Math.random() * 0xffffffff) >>> 0;
+    const recipe = makeSubject(seed);
+    const target = drawSubject(recipe);
+    const engine = new PaintEngine(TW, TH, seed);
+    const surface = new PaintSurface(engine, { segments: 4, castShadow: false, hScale: 0.006 });
+
+    const group = new THREE.Group();
+    group.position.copy(paintingPos(i));
+    surface.mesh.scale.set(S, S, S);
+    surface.mesh.userData = { kind: 'paint', idx: i };
+    group.add(surface.mesh);
+    makeFrame(group, seed, i);
+    const plaque = makePlaque(group, recipe, seed, i);
+    scene.add(group);
+
+    slots.push({ seed, recipe, target, engine, surface, group, plaque });
+    ui.info.textContent = `preparando lienzos ${i + 1}/${N}…`;
+    await nextFrame();
+    if (mine !== runId) return;
+  }
+
+  for (let i = 0; i < N; i++) {
+    if (mine !== runId) return;
+    ui.info.textContent = `pintando ${i + 1}/${N}…`;
+    await paint(slots[i], mine);
+  }
+  ui.info.textContent = `${N} cuadros · ${((performance.now() - t0) / 1000).toFixed(1)}s`;
+}
+
+let skipping = false;
+
+async function paint(slot, mine) {
+  const { seed, target, engine, surface } = slot;
+  // planStrokes paints as it plans — it needs the canvas so far to decide
+  // where the error is — so the engine is wiped and replayed for the show.
+  const strokes = planStrokes(target, seed, engine);
+  engine.reset();
+  surface.update();
+  for (let s = 0; s < strokes.length;) {
+    const per = skipping
+      ? strokes.length
+      : Math.max(1, Math.ceil(strokes.length / framesPerPainting()));
+    const end = Math.min(strokes.length, s + per);
+    for (; s < end; s++) engine.stampStroke(strokes[s], s);
+    surface.update();
+    await nextFrame();
+    if (mine !== runId) return;
+  }
+  skipping = false;
+}
+
+// --- focusing --------------------------------------------------------------
+// Click a painting and the camera glides to it; click it again, or click the
+// darkness, and it glides home. A click is a press that didn't drag.
+const HOME_POS = camera.position.clone();
+const HOME_TGT = controls.target.clone();
+// Pull back far enough that the framed canvas fits the viewport with room to
+// breathe, on both axes — a fixed distance crops it on narrow/portrait screens.
+const FOCUS_MARGIN = 1.7;
+function focusDist() {
+  const fw = PW * 0.075;                     // frame border, matches makeFrame
+  const w = (PW + fw * 2) * FOCUS_MARGIN;
+  const h = (PH + fw * 2) * FOCUS_MARGIN;
+  const tan = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+  return Math.max(h / 2 / tan, w / 2 / (tan * camera.aspect));
+}
+let focused = -1;
+let flight = null;
+
+function flyTo(pos, tgt) {
+  flight = {
+    t0: performance.now(), dur: 950,
+    fromPos: camera.position.clone(), fromTgt: controls.target.clone(),
+    toPos: pos.clone(), toTgt: tgt.clone(),
+  };
+}
+
+function focusPainting(idx) {
+  if (idx === focused || idx < 0) {
+    focused = -1;
+    flyTo(HOME_POS, HOME_TGT);
+    return;
+  }
+  focused = idx;
+  const p = paintingPos(idx);
+  flyTo(p.clone().add(new THREE.Vector3(0, 0, focusDist())), p);
+}
+
+const ray = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+let press = null;
+renderer.domElement.addEventListener('pointerdown', e => {
+  press = { x: e.clientX, y: e.clientY };
+});
+renderer.domElement.addEventListener('pointerup', e => {
+  if (!press) return;
+  const moved = Math.hypot(e.clientX - press.x, e.clientY - press.y);
+  press = null;
+  if (moved > 6) return;                          // that was a drag
+  ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObjects(scene.children, true)
+    .find(h => h.object.userData?.kind);
+  if (!hit) { if (focused >= 0) focusPainting(-1); return; }
+  const { kind, idx } = hit.object.userData;
+  if (kind === 'paint') focusPainting(idx);
+});
+
+// --- loop ------------------------------------------------------------------
+const easeInOut = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+renderer.setAnimationLoop(() => {
+  if (flight) {
+    const k = Math.min(1, (performance.now() - flight.t0) / flight.dur);
+    const e = easeInOut(k);
+    camera.position.lerpVectors(flight.fromPos, flight.toPos, e);
+    controls.target.lerpVectors(flight.fromTgt, flight.toTgt, e);
+    if (k >= 1) flight = null;
+  } else {
+    controls.update();
+  }
+  renderer.render(scene, camera);
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+document.getElementById('menuBtn').onclick = () => {
+  document.getElementById('ui').classList.toggle('open');
+};
+document.getElementById('re').onclick = run;
+document.getElementById('skip').onclick = () => { skipping = true; };
+addEventListener('keydown', e => {
+  if (e.key === 'r' || e.key === 'R') run();
+  if (e.key === 's' || e.key === 'S') skipping = true;
+});
+
+run();
+</script>
+</body>
+</html>

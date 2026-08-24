@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>oiljs — retratos al óleo</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1713; font-family: ui-monospace, Menlo, monospace; }
+  #app { position: fixed; inset: 0; }
+  #ui {
+    position: fixed; top: 12px; left: 12px; z-index: 10;
+    background: rgba(20, 17, 13, 0.82); color: #d8cfc0;
+    padding: 12px 14px; border-radius: 8px; font-size: 12px; line-height: 1.7;
+    border: 1px solid rgba(216, 207, 192, 0.15);
+    user-select: none;
+  }
+  #ui b { color: #f0e6d2; }
+  #ui button {
+    background: #3a332a; color: #e8dfc8; border: 1px solid #5a5142;
+    border-radius: 5px; padding: 3px 10px; margin-right: 6px; cursor: pointer;
+    font-family: inherit; font-size: 12px;
+  }
+  #ui button:hover { background: #4a4234; }
+  #seed { color: #c8a86a; }
+  #status { color: #8a8172; }
+  #target {
+    position: fixed; right: 12px; bottom: 12px; z-index: 10;
+    width: 128px; border: 1px solid rgba(216,207,192,0.3); border-radius: 4px;
+    display: none;
+  }
+  #bar { height: 3px; background: #2a251e; border-radius: 2px; margin-top: 8px; overflow: hidden; }
+  #barfill { height: 100%; width: 0%; background: #c8a86a; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="ui">
+  <div><b>oiljs</b> — retrato al óleo · seed <span id="seed">—</span></div>
+  <div id="status">generando…</div>
+  <div style="margin-top:8px">
+    <button id="btnNew">Nuevo (R)</button>
+    <button id="btnReplay">Repintar (Espacio)</button>
+    <button id="btnFinish">Terminar (F)</button>
+    <button id="btnTarget">Objetivo (T)</button>
+  </div>
+  <div id="bar"><div id="barfill"></div></div>
+</div>
+<canvas id="target"></canvas>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./node_modules/three/build/three.module.js",
+    "three/addons/": "./node_modules/three/examples/jsm/",
+    "mixbox": "./node_modules/mixbox/mixbox.esm.js"
+  }
+}
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

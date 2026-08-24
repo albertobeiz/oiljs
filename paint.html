@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>oiljs — banco de pruebas</title>
+<style>
+  body { margin: 0; background: #14120f; color: #cfc6b4; font-family: ui-monospace, monospace; }
+  #bar { padding: 8px; font-size: 12px; display: flex; gap: 8px; align-items: center; }
+  button { background: #3a332a; color: #e8dfc8; border: 1px solid #5a5142; border-radius: 4px;
+           padding: 3px 10px; font-family: inherit; cursor: pointer; }
+  #row { display: flex; gap: 8px; padding: 0 8px 8px; align-items: flex-start; }
+  figure { margin: 0; flex: 0 0 auto; }
+  canvas { display: block; width: 30vw; height: auto; border-radius: 3px; background: #000; }
+  figcaption { font-size: 11px; text-align: center; padding-top: 3px; color: #7d7566; }
+  #info { color: #8a8172; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <button id="re">Otro (R)</button>
+  <span id="info">…</span>
+</div>
+<div id="row">
+  <figure><canvas id="cTarget"></canvas><figcaption>objetivo</figcaption></figure>
+  <figure><canvas id="cPaint"></canvas><figcaption>pintado (color)</figcaption></figure>
+  <figure><canvas id="cRelief"></canvas><figcaption>relieve (altura sombreada)</figcaption></figure>
+</div>
+<script type="importmap">
+{ "imports": { "three": "./node_modules/three/build/three.module.js", "mixbox": "./node_modules/mixbox/mixbox.esm.js" } }
+</script>
+<script type="module">
+import { makeSubject, drawSubject, TW, TH } from './src/subject.js';
+import { planStrokes } from './src/planner.js';
+import { PaintEngine } from './src/engine.js';
+
+const info = document.getElementById('info');
+const cT = document.getElementById('cTarget'), cP = document.getElementById('cPaint'),
+      cR = document.getElementById('cRelief');
+for (const c of [cT, cP, cR]) { c.width = TW; c.height = TH; }
+
+// Height field shaded with a simple lambert + specular, so impasto can be
+// judged without spinning up the whole three.js scene.
+function shadeRelief(engine, ctx) {
+  const { W, H, height, color } = engine;
+  const img = ctx.createImageData(W, H);
+  const d = img.data;
+  const lx = -0.55, ly = 0.55, lz = 0.63;      // light dir, matches the 3D key light
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      const i = y * W + x;
+      const nx = -(height[i + 1] - height[i - 1]) * 1.6;
+      const ny = (height[i - W] - height[i + W]) * 1.6;
+      const len = Math.hypot(nx, ny, 1);
+      const dot = Math.max(0, (nx * lx + ny * ly + lz) / len);
+      const spec = Math.pow(dot, 26) * 0.9;
+      const amb = 0.30;
+      const k = amb + dot * 0.85;
+      const o = i * 4;
+      d[o] = Math.min(255, color[o] * k + spec * 255);
+      d[o + 1] = Math.min(255, color[o + 1] * k + spec * 250);
+      d[o + 2] = Math.min(255, color[o + 2] * k + spec * 235);
+      d[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function run(seed) {
+  info.textContent = `seed ${seed} · pintando…`;
+  requestAnimationFrame(() => {
+    const t0 = performance.now();
+    const recipe = makeSubject(seed);
+    const target = drawSubject(recipe);
+    cT.getContext('2d').drawImage(target, 0, 0);
+
+    const engine = new PaintEngine(TW, TH, seed);
+    const strokes = planStrokes(target, seed, engine);
+
+    const pc = cP.getContext('2d');
+    const img = pc.createImageData(TW, TH);
+    img.data.set(engine.color);
+    pc.putImageData(img, 0, 0);
+    shadeRelief(engine, cR.getContext('2d'));
+
+    info.textContent = `seed ${seed} · ${recipe.species}/${recipe.media} · `
+      + `${strokes.length} pinceladas · ${((performance.now() - t0) / 1000).toFixed(1)}s`;
+    location.hash = seed;
+  });
+}
+
+document.getElementById('re').onclick = () => run((Math.random() * 0xffffffff) >>> 0);
+addEventListener('keydown', e => { if (e.key === 'r' || e.key === 'R') document.getElementById('re').onclick(); });
+const h = parseInt(location.hash.slice(1), 10);
+run(Number.isFinite(h) ? h : (Math.random() * 0xffffffff) >>> 0);
+</script>
+</body>
+</html>

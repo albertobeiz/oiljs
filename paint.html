@@ -67,14 +67,14 @@ function shadeRelief(engine, ctx) {
 
 function run(seed) {
   info.textContent = `seed ${seed} · pintando…`;
-  requestAnimationFrame(() => {
+  requestAnimationFrame(async () => {
     const t0 = performance.now();
     const recipe = makeSubject(seed);
     const { canvas: target, labels } = renderSubject(recipe);
     cT.getContext('2d').drawImage(target, 0, 0);
 
     const engine = new PaintEngine(TW, TH, seed);
-    const strokes = planStrokes(target, seed, engine, labels, REGIONS);
+    const strokes = await planStrokes(target, seed, engine, labels, REGIONS);
 
     const pc = cP.getContext('2d');
     const img = pc.createImageData(TW, TH);

@@ -43,6 +43,11 @@
     <button id="btnFinish">Terminar (F)</button>
     <button id="btnTarget">Objetivo (T)</button>
   </div>
+  <div style="margin-top:6px; display:flex; gap:8px; align-items:center">
+    <label for="speed" style="color:#8a8172">velocidad</label>
+    <input id="speed" type="range" min="0" max="100" value="45" style="width:130px; accent-color:#c8a86a">
+    <span id="phase" style="color:#c8a86a"></span>
+  </div>
   <div id="bar"><div id="barfill"></div></div>
 </div>
 <canvas id="target"></canvas>

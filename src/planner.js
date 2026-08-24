@@ -9,7 +9,11 @@ import { makeRng } from './rng.js';
 // the saliency map: the tiny brushes only come out where the image is busy
 // (eyes, mouth, hair edges), which is where a viewer actually looks.
 const LAYERS = [
-  { r: 40, T: 0,  minLen: 3, maxLen: 8,  sal: 0 },     // underpainting
+  // The underpainting threshold is NOT zero: bare canvas differs hugely from
+  // any target, so the first pass still covers everything — but when a later
+  // region's ladder re-runs this layer, cells already blocked in by a
+  // neighbour's spill are left alone instead of being repainted from scratch.
+  { r: 40, T: 30, minLen: 3, maxLen: 8,  sal: 0 },     // underpainting
   { r: 22, T: 40, minLen: 3, maxLen: 9,  sal: 0 },
   { r: 13, T: 33, minLen: 3, maxLen: 10, sal: 0 },
   { r: 8,  T: 26, minLen: 4, maxLen: 12, sal: 0.10 },
@@ -85,7 +89,10 @@ function prepareLayer(targetCanvas, W, H, L, labels, g) {
 // masses, then the head, then the features, and the eyes last — running the
 // whole coarse-to-fine ladder inside each region before moving on. Without
 // one it falls back to plain layer order over the whole canvas.
-export function planStrokes(targetCanvas, seed, engine, labels = null, regions = null) {
+//
+// Async: with a `yieldFn` it hands control back between layers, so a page
+// can keep rendering while a painting is being planned.
+export async function planStrokes(targetCanvas, seed, engine, labels = null, regions = null, yieldFn = null) {
   const W = targetCanvas.width, H = targetCanvas.height;
   const g = makeRng(seed ^ 0x9e3779b9);
   const sim = engine.color;                    // engine grid == target pixels
@@ -99,11 +106,12 @@ export function planStrokes(targetCanvas, seed, engine, labels = null, regions =
 
   const prep = LAYERS.map(L => prepareLayer(targetCanvas, W, H, L, labels, g));
   const passes = (labels && regions)
-    ? regions.map((rg, i) => ({ label: i, id: rg.id, from: rg.from }))
+    ? regions.map((rg, i) => ({ label: rg.all ? -1 : i, id: rg.id, from: rg.from }))
     : [{ label: -1, id: null, from: 0 }];       // -1: every cell, one pass
 
   for (const pass of passes) {
     for (let li = pass.from; li < LAYERS.length; li++) {
+      if (yieldFn) await yieldFn();
       const { r, T, minLen, maxLen, sal: salMin } = LAYERS[li];
       const { ref, gx, gy, cells, step, owner } = prep[li];
 

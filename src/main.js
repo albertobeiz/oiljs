@@ -15,6 +15,16 @@ const ui = {
   status: document.getElementById('status'),
   bar: document.getElementById('barfill'),
   target: document.getElementById('target'),
+  speed: document.getElementById('speed'),
+  phase: document.getElementById('phase'),
+};
+
+// Frames one full painting takes; read live so the slider retimes mid-replay.
+// Gentler curve than the gallery's: this view shows a single painting, and
+// the point of watching is seeing the regions arrive in a painter's order.
+const framesPerPainting = () => {
+  const t = ui.speed.value / 100;
+  return Math.round(1500 - 1430 * Math.pow(t, 1.5));   // ~25 s down to ~1 s
 };
 
 // --- renderer / scene ------------------------------------------------------
@@ -85,7 +95,6 @@ scene.add(wall);
 // --- painting state --------------------------------------------------------
 let strokes = [];
 let nextStroke = 0;          // replay cursor
-let strokesPerFrame = 1;
 let playing = false;
 let currentSeed = 0;
 
@@ -109,7 +118,7 @@ async function generate(seed) {
   const t0 = performance.now();
   engine = new PaintEngine(TW, TH, seed);
   surface.setEngine(engine);
-  strokes = planStrokes(target, seed, engine, labels, REGIONS);
+  strokes = await planStrokes(target, seed, engine, labels, REGIONS);
   const secs = ((performance.now() - t0) / 1000).toFixed(1);
   setStatus(`${recipe.species}/${recipe.media} · ${strokes.length} pinceladas · ${secs}s`);
 
@@ -120,22 +129,24 @@ function replay() {
   engine.reset();
   surface.update();
   nextStroke = 0;
-  const targetFrames = 22 * 60;   // ~22 s at 60 fps
-  strokesPerFrame = Math.max(1, Math.ceil(strokes.length / targetFrames));
   playing = true;
 }
 
 // --- loop ------------------------------------------------------------------
 renderer.setAnimationLoop(() => {
   if (playing && strokes.length) {
-    const end = Math.min(strokes.length, nextStroke + strokesPerFrame);
+    // read the slider every frame, so dragging it retimes the replay live
+    const per = Math.max(1, Math.ceil(strokes.length / framesPerPainting()));
+    const end = Math.min(strokes.length, nextStroke + per);
     for (; nextStroke < end; nextStroke++) {
       engine.stampStroke(strokes[nextStroke], nextStroke);
     }
     surface.update();
     ui.bar.style.width = `${(nextStroke / strokes.length * 100).toFixed(1)}%`;
+    ui.phase.textContent = strokes[nextStroke - 1]?.region ?? '';
     if (nextStroke >= strokes.length) {
       playing = false;
+      ui.phase.textContent = '';
       setStatus(`${strokes.length} pinceladas · terminado`);
     }
   }

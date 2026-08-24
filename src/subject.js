@@ -92,12 +92,18 @@ function paintPieces(s, r, F) {
 // region is allowed — a 40px brush has no business blocking in an eye, so
 // small regions join the picture once the brushes are small enough to mean
 // something there. Everything the planner does downstream reads this table.
+// `all: true` marks a pass that ignores regions and works over the whole
+// canvas. Blocking a region in with a big brush always spills over its
+// neighbours, and once a region is finished nothing comes back to fix it —
+// so, exactly like a painter, there is a pass that goes round cutting the
+// edges back in before the final accents go on.
 export const REGIONS = [
   { id: 'fondo',   parts: [], from: 0 },
   { id: 'cuerpo',  parts: ['tail', 'legs', 'torso', 'arms', 'wings', 'paws', 'quadlegs', 'offhand', 'held'], from: 0 },
   { id: 'cabeza',  parts: ['skull', 'ears'], from: 0 },
   { id: 'pelo',    parts: ['hair', 'crest', 'worn'], from: 1 },
   { id: 'rasgos',  parts: ['nose', 'mouth', 'brows'], from: 2 },
+  { id: 'bordes',  parts: [], from: 3, all: true },
   { id: 'ojos',    parts: ['eyes'], from: 3 },
   { id: 'remates', parts: ['extras', 'tearsWet'], from: 3 },
 ];
